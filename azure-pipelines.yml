@@ -1,0 +1,237 @@
+# Azure DevOps Pipeline — QA Master
+# cryptogamer-ecommerce
+#
+# Para usar en Azure DevOps:
+# 1. New Pipeline → Azure Repos Git o GitHub
+# 2. Seleccionar este repositorio
+# 3. "Existing Azure Pipelines YAML file" → /azure-pipelines.yml
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+schedules:
+  - cron: '0 6 * * *'
+    displayName: Daily 6AM UTC
+    branches:
+      include: [main]
+    always: true
+
+variables:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.12'
+  APP_REPO: 'https://github.com/marcebusi/cryptogamer-ecommerce.git'
+
+# ─────────────────────────────────────────────────────────────
+# STAGE 1: Setup — preparar el backend y la DB
+# ─────────────────────────────────────────────────────────────
+stages:
+  - stage: Setup
+    displayName: '🔧 Setup Backend'
+    jobs:
+      - job: SetupBackend
+        displayName: 'Levantar backend y seed DB'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - script: |
+              git clone $(APP_REPO) app
+              cd app/backend
+              npm ci
+              cp .env.example .env || true
+              npx prisma migrate deploy --schema=./prisma/schema.prisma || true
+              npx prisma db seed || true
+            displayName: 'Clone y preparar backend'
+            env:
+              NODE_ENV: test
+
+          - publish: app/backend/prisma/dev.db
+            artifact: TestDatabase
+            displayName: 'Publicar DB como artifact'
+
+  # ─────────────────────────────────────────────────────────────
+  # STAGE 2: Tests en paralelo
+  # ─────────────────────────────────────────────────────────────
+  - stage: Tests
+    displayName: '🧪 Test Suites (paralelo)'
+    dependsOn: Setup
+    jobs:
+      # ── Job: API Tests ────────────────────────────────────────
+      - job: APITests
+        displayName: '🔌 API Tests — Playwright'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: none
+
+          - script: |
+              git clone $(APP_REPO) app
+              cd app/backend && npm ci
+              cp .env.example .env || true
+              npx prisma migrate deploy --schema=./prisma/schema.prisma || true
+              npx prisma db seed || true
+              nohup npm start &
+              sleep 5
+            displayName: 'Levantar backend'
+            env:
+              NODE_ENV: test
+              PORT: '3001'
+
+          - script: |
+              git clone https://github.com/marcebusi/qa-api-testing-cryptogamer.git api
+              cd api
+              npm ci
+              npx playwright test --reporter=junit,html
+            displayName: 'Correr API tests'
+            env:
+              BASE_URL: 'http://localhost:3001'
+
+          - task: PublishTestResults@2
+            displayName: 'Publicar resultados JUnit'
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: 'api/test-results/*.xml'
+              testRunTitle: 'API Tests'
+
+          - publish: api/playwright-report
+            artifact: APIReport
+            condition: always()
+            displayName: 'Publicar reporte HTML'
+
+      # ── Job: Data Quality ─────────────────────────────────────
+      - job: DataQualityTests
+        displayName: '🗄️ Data Quality — pytest'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: none
+
+          - download: current
+            artifact: TestDatabase
+            displayName: 'Descargar DB'
+
+          - script: |
+              git clone https://github.com/marcebusi/qa-data-quality-cryptogamer.git dq
+              cd dq
+              pip install -r requirements.txt
+              pytest tests/ -v \
+                --junitxml=reports/junit.xml \
+                --tb=short
+            displayName: 'Correr Data Quality tests'
+            env:
+              DB_PATH: $(Pipeline.Workspace)/TestDatabase/dev.db
+
+          - task: PublishTestResults@2
+            displayName: 'Publicar resultados JUnit'
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: 'dq/reports/junit.xml'
+              testRunTitle: 'Data Quality Tests'
+
+      # ── Job: E2E Tests ────────────────────────────────────────
+      - job: E2ETests
+        displayName: '🎭 E2E Tests — Playwright'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: none
+
+          - script: |
+              git clone $(APP_REPO) app
+              cd app/backend && npm ci
+              cp .env.example .env || true
+              npx prisma migrate deploy --schema=./prisma/schema.prisma || true
+              npx prisma db seed || true
+              nohup npm start &
+              sleep 5
+              cd ../..
+              cd app && npm ci && npm run build
+              npx serve -s dist -l 5173 &
+              sleep 3
+            displayName: 'Levantar backend + frontend'
+            env:
+              NODE_ENV: test
+              PORT: '3001'
+
+          - script: |
+              git clone https://github.com/marcebusi/qa-playwright-cryptogamer.git e2e
+              cd e2e
+              npm ci
+              npx playwright install --with-deps chromium
+              npx playwright test --grep @smoke --reporter=junit,html
+            displayName: 'Correr E2E smoke tests'
+            env:
+              BASE_URL: 'http://localhost:5173'
+              API_URL: 'http://localhost:3001'
+
+          - task: PublishTestResults@2
+            displayName: 'Publicar resultados JUnit'
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: 'e2e/test-results/*.xml'
+              testRunTitle: 'E2E Tests'
+
+          - publish: e2e/playwright-report
+            artifact: E2EReport
+            condition: always()
+            displayName: 'Publicar reporte HTML'
+
+  # ─────────────────────────────────────────────────────────────
+  # STAGE 3: Performance (solo en main)
+  # ─────────────────────────────────────────────────────────────
+  - stage: Performance
+    displayName: '⚡ Performance — k6'
+    dependsOn: Tests
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: PerformanceSmoke
+        displayName: 'k6 Smoke Test'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: none
+
+          - script: |
+              git clone $(APP_REPO) app
+              cd app/backend && npm ci
+              cp .env.example .env || true
+              npx prisma migrate deploy --schema=./prisma/schema.prisma || true
+              npx prisma db seed || true
+              nohup npm start &
+              sleep 5
+            displayName: 'Levantar backend'
+            env:
+              NODE_ENV: test
+              PORT: '3001'
+
+          - script: |
+              sudo gpg --no-default-keyring \
+                --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+                --keyserver hkp://keyserver.ubuntu.com:80 \
+                --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+              echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+                | sudo tee /etc/apt/sources.list.d/k6.list
+              sudo apt-get update && sudo apt-get install k6
+            displayName: 'Instalar k6'
+
+          - script: |
+              git clone https://github.com/marcebusi/qa-performance-cryptogamer.git perf
+              cd perf
+              k6 run --out json=results/smoke.json tests/01_smoke.js
+            displayName: 'Correr smoke test'
+            env:
+              BASE_URL: 'http://localhost:3001'
+
+          - publish: perf/results
+            artifact: PerformanceResults
+            condition: always()
+            displayName: 'Publicar resultados k6'

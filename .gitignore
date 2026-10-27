@@ -1,0 +1,6 @@
+all-reports/
+summary.html
+*.db
+.env
+__pycache__/
+node_modules/
