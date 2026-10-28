@@ -46,7 +46,7 @@ jobs:
 
       - name: TypeScript compile check
         working-directory: e2e
-        run: npx --package=typescript tsc --noEmit
+        run: npx --package=typescript@5 tsc --noEmit
 
       - name: Verificar estructura de archivos
         run: |
@@ -82,7 +82,7 @@ jobs:
 
       - name: TypeScript compile check
         working-directory: api
-        run: npx --package=typescript tsc --noEmit
+        run: npx --package=typescript@5 tsc --noEmit
 
       - name: Verificar estructura de archivos
         run: |
