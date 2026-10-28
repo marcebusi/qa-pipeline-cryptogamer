@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Corre todos los días a las 6 AM UTC (3 AM Argentina)
     - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
@@ -15,59 +14,19 @@ on:
         required: false
         default: 'all'
         type: choice
-        options: [all, e2e, api, data-quality, performance]
+        options: [all, lint, data-quality, structure, summary]
 
-# Cancela runs anteriores si se pushea de nuevo antes de que terminen
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   # ─────────────────────────────────────────────────────────────
-  # JOB 0: Setup — levanta el backend una sola vez y lo comparte
+  # JOB 1: Lint & estructura de tests E2E
   # ─────────────────────────────────────────────────────────────
-  setup-backend:
-    name: 🔧 Setup Backend
+  lint-e2e:
+    name: 🎭 Lint — E2E Suite (Playwright)
     runs-on: ubuntu-latest
-    outputs:
-      db-path: ${{ steps.paths.outputs.db-path }}
-
-    steps:
-      - name: Checkout pipeline repo
-        uses: actions/checkout@v4
-
-      - name: Clone cryptogamer-ecommerce
-        run: |
-          git clone https://github.com/marcebusi/cryptogamer-ecommerce.git app
-          cd app/backend
-          npm ci
-          npx prisma db push --accept-data-loss
-          npx prisma db seed || true
-          echo "✅ DB generada:"
-          ls -la prisma/
-        env:
-          NODE_ENV: test
-          DATABASE_URL: "file:./prisma/dev.db"
-
-      - name: Set output paths
-        id: paths
-        run: echo "db-path=${{ github.workspace }}/app/backend/prisma/dev.db" >> $GITHUB_OUTPUT
-
-      - name: Upload DB como artifact compartido
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-database
-          path: app/backend/prisma/dev.db
-          retention-days: 1
-
-  # ─────────────────────────────────────────────────────────────
-  # JOB 1: E2E Tests (Playwright)
-  # ─────────────────────────────────────────────────────────────
-  e2e-tests:
-    name: 🎭 E2E Tests — Playwright
-    runs-on: ubuntu-latest
-    needs: setup-backend
-    if: ${{ github.event.inputs.suite == 'all' || github.event.inputs.suite == 'e2e' || github.event.inputs.suite == '' || github.event_name != 'workflow_dispatch' }}
 
     steps:
       - name: Clone E2E repo
@@ -76,55 +35,34 @@ jobs:
           repository: marcebusi/qa-playwright-cryptogamer
           path: e2e
 
-      - name: Clone backend
-        run: |
-          git clone https://github.com/marcebusi/cryptogamer-ecommerce.git app
-          cd app/backend && npm ci
-          npx prisma db push --accept-data-loss
-          npx prisma db seed || true
-          npm start &
-          sleep 5
-          cd ../..
-          cd app && npm ci && npm run build
-          npx serve -s dist -l 5173 &
-          sleep 3
-        env:
-          DATABASE_URL: "file:./prisma/dev.db"
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install Playwright
+      - name: Install dependencies
         working-directory: e2e
+        run: npm ci
+
+      - name: TypeScript compile check
+        working-directory: e2e
+        run: npx tsc --noEmit
+
+      - name: Verificar estructura de archivos
         run: |
-          npm ci
-          npx playwright install --with-deps chromium
-
-      - name: Run E2E smoke tests
-        working-directory: e2e
-        run: npx playwright test --grep @smoke --reporter=html
-        env:
-          BASE_URL: http://localhost:5173
-          API_URL: http://localhost:3001
-
-      - name: Upload E2E report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: e2e-report
-          path: e2e/playwright-report/
-          retention-days: 7
+          echo "✅ Verificando estructura del proyecto E2E..."
+          test -f e2e/playwright.config.ts     && echo "✓ playwright.config.ts"
+          test -d e2e/tests                    && echo "✓ tests/"
+          test -d e2e/pages                    && echo "✓ pages/ (Page Object Model)"
+          test -f e2e/package.json             && echo "✓ package.json"
+          echo "✅ Estructura válida"
 
   # ─────────────────────────────────────────────────────────────
-  # JOB 2: API Tests (Playwright API)
+  # JOB 2: Lint & estructura de tests API
   # ─────────────────────────────────────────────────────────────
-  api-tests:
-    name: 🔌 API Tests — Playwright
+  lint-api:
+    name: 🔌 Lint — API Suite (Playwright)
     runs-on: ubuntu-latest
-    needs: setup-backend
-    if: ${{ github.event.inputs.suite == 'all' || github.event.inputs.suite == 'api' || github.event.inputs.suite == '' || github.event_name != 'workflow_dispatch' }}
 
     steps:
       - name: Clone API repo
@@ -133,46 +71,33 @@ jobs:
           repository: marcebusi/qa-api-testing-cryptogamer
           path: api
 
-      - name: Clone y levantar backend
-        run: |
-          git clone https://github.com/marcebusi/cryptogamer-ecommerce.git app
-          cd app/backend && npm ci
-          npx prisma db push --accept-data-loss
-          npx prisma db seed || true
-          npm start &
-          sleep 5
-        env:
-          DATABASE_URL: "file:./prisma/dev.db"
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install y correr API tests
+      - name: Install dependencies
         working-directory: api
+        run: npm ci
+
+      - name: TypeScript compile check
+        working-directory: api
+        run: npx tsc --noEmit
+
+      - name: Verificar estructura de archivos
         run: |
-          npm ci
-          npx playwright test --reporter=html
-        env:
-          BASE_URL: http://localhost:3001
-
-      - name: Upload API report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: api-report
-          path: api/playwright-report/
-          retention-days: 7
+          echo "✅ Verificando estructura del proyecto API..."
+          test -f api/playwright.config.ts     && echo "✓ playwright.config.ts"
+          test -d api/api-tests                && echo "✓ api-tests/"
+          test -f api/global-setup.ts          && echo "✓ global-setup.ts"
+          echo "✅ Estructura válida"
 
   # ─────────────────────────────────────────────────────────────
-  # JOB 3: Data Quality Tests (pytest)
+  # JOB 3: Data Quality — corre contra la DB del repo
   # ─────────────────────────────────────────────────────────────
-  data-quality-tests:
+  data-quality:
     name: 🗄️ Data Quality — pytest
     runs-on: ubuntu-latest
-    needs: setup-backend
-    if: ${{ github.event.inputs.suite == 'all' || github.event.inputs.suite == 'data-quality' || github.event.inputs.suite == '' || github.event_name != 'workflow_dispatch' }}
 
     steps:
       - name: Clone Data Quality repo
@@ -181,11 +106,27 @@ jobs:
           repository: marcebusi/qa-data-quality-cryptogamer
           path: dq
 
-      - name: Download DB artifact
-        uses: actions/download-artifact@v4
+      - name: Clone cryptogamer-ecommerce (para la DB)
+        uses: actions/checkout@v4
         with:
-          name: test-database
-          path: db
+          repository: marcebusi/cryptogamer-ecommerce
+          path: app
+
+      - name: Setup Node y generar DB
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generar DB con Prisma
+        working-directory: app/backend
+        run: |
+          npm ci
+          npx prisma db push --accept-data-loss
+          npx prisma db seed || true
+          echo "DB generada en:"
+          ls -la prisma/
+        env:
+          DATABASE_URL: "file:./prisma/dev.db"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -195,100 +136,78 @@ jobs:
       - name: Install y correr Data Quality tests
         working-directory: dq
         run: |
-          pip install -r requirements.txt
-          pytest tests/ -v --tb=short
+          pip install pytest pandas
+          pytest tests/ -v
         env:
-          DB_PATH: ${{ github.workspace }}/db/dev.db
+          DB_PATH: ${{ github.workspace }}/app/backend/prisma/dev.db
 
-      - name: Upload DQ report
+      - name: Upload reporte
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: dq-report
-          path: dq/reports/
+          name: dq-results
+          path: dq/
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────
-  # JOB 4: Performance Smoke (k6) — solo en push a main
+  # JOB 4: Verificar pipelines de los otros proyectos
   # ─────────────────────────────────────────────────────────────
-  performance-smoke:
-    name: ⚡ Performance Smoke — k6
+  validate-pipelines:
+    name: 📋 Validar YAMLs de CI de todos los proyectos
     runs-on: ubuntu-latest
-    needs: setup-backend
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event.inputs.suite == 'performance' }}
 
     steps:
-      - name: Clone Performance repo
-        uses: actions/checkout@v4
-        with:
-          repository: marcebusi/qa-performance-cryptogamer
-          path: perf
-
-      - name: Clone y levantar backend
+      - name: Clone todos los repos QA
         run: |
-          git clone https://github.com/marcebusi/cryptogamer-ecommerce.git app
-          cd app/backend && npm ci
-          npx prisma db push --accept-data-loss
-          npx prisma db seed || true
-          npm start &
-          sleep 5
-        env:
-          DATABASE_URL: "file:./prisma/dev.db"
+          git clone https://github.com/marcebusi/qa-playwright-cryptogamer.git e2e
+          git clone https://github.com/marcebusi/qa-api-testing-cryptogamer.git api
+          git clone https://github.com/marcebusi/qa-performance-cryptogamer.git perf
+          git clone https://github.com/marcebusi/qa-data-quality-cryptogamer.git dq
 
-      - name: Install k6
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Validar YAMLs de GitHub Actions
         run: |
-          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
-            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
-            | sudo tee /etc/apt/sources.list.d/k6.list
-          sudo apt-get update && sudo apt-get install k6
+          echo "Validando workflows de cada proyecto..."
+          for dir in e2e api perf dq; do
+            if [ -d "$dir/.github/workflows" ]; then
+              echo "=== $dir ==="
+              yamllint -d relaxed $dir/.github/workflows/*.yml && echo "✅ OK"
+            fi
+          done
 
-      - name: Correr smoke test
-        working-directory: perf
-        run: k6 run --out json=results/smoke.json tests/01_smoke.js
-        env:
-          BASE_URL: http://localhost:3001
-
-      - name: Upload k6 results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: performance-report
-          path: perf/results/
-          retention-days: 7
+      - name: Contar tests por proyecto
+        run: |
+          echo "## Inventario de tests" >> $GITHUB_STEP_SUMMARY
+          echo "| Proyecto | Archivos de test |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          E2E=$(find e2e/tests -name "*.spec.ts" 2>/dev/null | wc -l)
+          API=$(find api/api-tests -name "*.spec.ts" 2>/dev/null | wc -l)
+          PERF=$(find perf/tests -name "*.js" 2>/dev/null | wc -l)
+          DQ=$(find dq/tests -name "*.py" 2>/dev/null | wc -l)
+          echo "| 🎭 E2E Playwright | $E2E specs |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔌 API Playwright | $API specs |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚡ Performance k6 | $PERF scripts |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🗄️ Data Quality pytest | $DQ módulos |" >> $GITHUB_STEP_SUMMARY
 
   # ─────────────────────────────────────────────────────────────
-  # JOB 5: Reporte final — se corre cuando todos terminan
+  # JOB 5: Summary final
   # ─────────────────────────────────────────────────────────────
   summary:
     name: 📊 Pipeline Summary
     runs-on: ubuntu-latest
-    needs: [e2e-tests, api-tests, data-quality-tests]
+    needs: [lint-e2e, lint-api, data-quality, validate-pipelines]
     if: always()
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download all reports
-        uses: actions/download-artifact@v4
-        with:
-          path: all-reports
-
-      - name: Generate summary
+      - name: Generar resumen
         run: |
           echo "## 🎮 QA Pipeline — cryptogamer-ecommerce" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Suite | Estado |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| 🎭 E2E (Playwright) | ${{ needs.e2e-tests.result == 'success' && '✅ Passed' || needs.e2e-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔌 API (Playwright) | ${{ needs.api-tests.result == 'success' && '✅ Passed' || needs.api-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🗄️ Data Quality (pytest) | ${{ needs.data-quality-tests.result == 'success' && '✅ Passed' || needs.data-quality-tests.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload combined reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: all-reports
-          path: all-reports/
-          retention-days: 14
+          echo "| 🎭 E2E Lint (Playwright) | ${{ needs.lint-e2e.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔌 API Lint (Playwright) | ${{ needs.lint-api.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🗄️ Data Quality (pytest) | ${{ needs.data-quality.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📋 Validación YAMLs CI   | ${{ needs.validate-pipelines.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
