@@ -46,7 +46,7 @@ jobs:
 
       - name: TypeScript compile check
         working-directory: e2e
-        run: npx tsc --noEmit
+        run: ./node_modules/.bin/tsc --noEmit
 
       - name: Verificar estructura de archivos
         run: |
@@ -82,7 +82,7 @@ jobs:
 
       - name: TypeScript compile check
         working-directory: api
-        run: npx tsc --noEmit
+        run: ./node_modules/.bin/tsc --noEmit
 
       - name: Verificar estructura de archivos
         run: |
@@ -126,7 +126,7 @@ jobs:
           echo "DB generada en:"
           ls -la prisma/
         env:
-          DATABASE_URL: "file:./prisma/dev.db"
+          DATABASE_URL: "file:./dev.db"
 
       - name: Setup Python
         uses: actions/setup-python@v5
