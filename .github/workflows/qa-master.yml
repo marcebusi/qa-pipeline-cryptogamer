@@ -41,11 +41,9 @@ jobs:
           git clone https://github.com/marcebusi/cryptogamer-ecommerce.git app
           cd app/backend
           npm ci
-          echo 'DATABASE_URL="file:./prisma/dev.db"' > .env
-          echo 'JWT_SECRET="ci-test-secret"' >> .env
-          echo 'PORT=3001' >> .env
-          npx prisma migrate deploy --schema=./prisma/schema.prisma
+          npx prisma db push --accept-data-loss
           npx prisma db seed || true
+          echo "✅ DB generada:"
           ls -la prisma/
         env:
           NODE_ENV: test
@@ -82,10 +80,7 @@ jobs:
         run: |
           git clone https://github.com/marcebusi/cryptogamer-ecommerce.git app
           cd app/backend && npm ci
-          echo 'DATABASE_URL="file:./prisma/dev.db"' > .env
-          echo 'JWT_SECRET="ci-test-secret"' >> .env
-          echo 'PORT=3001' >> .env
-          npx prisma migrate deploy --schema=./prisma/schema.prisma
+          npx prisma db push --accept-data-loss
           npx prisma db seed || true
           npm start &
           sleep 5
@@ -142,10 +137,7 @@ jobs:
         run: |
           git clone https://github.com/marcebusi/cryptogamer-ecommerce.git app
           cd app/backend && npm ci
-          echo 'DATABASE_URL="file:./prisma/dev.db"' > .env
-          echo 'JWT_SECRET="ci-test-secret"' >> .env
-          echo 'PORT=3001' >> .env
-          npx prisma migrate deploy --schema=./prisma/schema.prisma
+          npx prisma db push --accept-data-loss
           npx prisma db seed || true
           npm start &
           sleep 5
@@ -236,10 +228,7 @@ jobs:
         run: |
           git clone https://github.com/marcebusi/cryptogamer-ecommerce.git app
           cd app/backend && npm ci
-          echo 'DATABASE_URL="file:./prisma/dev.db"' > .env
-          echo 'JWT_SECRET="ci-test-secret"' >> .env
-          echo 'PORT=3001' >> .env
-          npx prisma migrate deploy --schema=./prisma/schema.prisma
+          npx prisma db push --accept-data-loss
           npx prisma db seed || true
           npm start &
           sleep 5
