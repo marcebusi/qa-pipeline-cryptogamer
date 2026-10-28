@@ -46,7 +46,7 @@ jobs:
 
       - name: Install TypeScript deps
         working-directory: e2e
-        run: npm install --save-dev typescript @types/node
+        run: npm install --save-dev typescript@5 @types/node
 
       - name: TypeScript compile check
         working-directory: e2e
